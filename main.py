@@ -14,7 +14,9 @@ Strategy, in plain words (hello, batch, orders, bar):
   above the slow EMA (240 bars) and the close has dipped at least 80 bps below
   the fast EMA. No dip, no trade.
 - Crash insurance: while holding, a trailing stop sells everything if the close
-  falls 300 bps below the highest close since entry.
+  falls 300 bps below the highest close since entry. After a stop exit the bot
+  waits 120 bars before any dip re-entry: a stop means the trend broke, and
+  buying the first dip back into it is how a down window keeps bleeding.
 - State is reconciled from the fills every batch: the bot only believes it holds
   a position when the account says so, so a rejected order can never strand it.
 
@@ -53,6 +55,7 @@ class Bot:
         self.entry_close = 0    # close of the bar the buy was decided on
         self.decision_close = 0  # close of the latest bar a buy was decided on
         self.peak_close = 0
+        self.cool_until = -1    # no dip re-entry before this bar index
 
     def _ema_update(self, close):
         kf = 2.0 / (FAST_N + 1)
@@ -95,7 +98,9 @@ class Bot:
                 return [{"side": "sell", "symbol": SYMBOL, "qty": pos.qty,
                          "max_slippage_bps": MAX_SLIP_BPS}]
             # Trailing stop: 300 bps below the highest close since entry.
+            # A stop exit starts the re-entry cooldown.
             if close * 10000 <= self.peak_close * (10000 - STOP_BPS):
+                self.cool_until = i + COOL_BARS
                 return [{"side": "sell", "symbol": SYMBOL, "qty": pos.qty,
                          "max_slippage_bps": MAX_SLIP_BPS}]
             return []
@@ -110,8 +115,9 @@ class Bot:
                          "notional_quote_units": state.cash,
                          "max_slippage_bps": MAX_SLIP_BPS}]
             return []
-        # Flat: dip re-entry after an exit, only in an uptrend.
-        if self.armed and i > SLOW_N and self.ema_fast > self.ema_slow:
+        # Flat: dip re-entry after an exit, only in an uptrend and only after
+        # any stop-exit cooldown has expired.
+        if self.armed and i > SLOW_N and i >= self.cool_until and self.ema_fast > self.ema_slow:
             if close * 10000 <= int(self.ema_fast) * (10000 - DIP_BPS):
                 self.decision_close = close
                 return [{"side": "buy", "symbol": SYMBOL,
