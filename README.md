@@ -14,7 +14,11 @@ It trades rarely, banks confirmed moves, and sits out chop.
    is above the slow EMA (240 bars) and the close has dipped at least 80 bps
    below the fast EMA. No dip, no trade.
 4. **Crash insurance.** While holding, a trailing stop sells everything if the
-   close falls 300 bps below the highest close since entry.
+   close falls 300 bps below the highest close since entry. After a stop exit
+   the bot waits 120 bars before any dip re-entry (round 2).
+5. **Gated open (round 2).** The first buy waits while the trailing 24-bar
+   return is worse than -50 bps, and buys at bar 240 at the latest no matter
+   what — so a steeply falling open cannot strand the bot long at the top.
 5. **Fill-driven state.** The bot only believes it holds a position when the
    account says so, so a rejected order can never strand it. No clock, no
    network, no files outside the repository, no randomness — fully deterministic.
@@ -52,6 +56,36 @@ momentum (+$2.446) to the unit, so its numbers are trustworthy.
   hourly regime switching (−$59 to −$105) — on this window every frequent-trading
   family loses to the ~26 bps round-trip cost and chop. The chosen design trades
   2 round trips per day instead.
+
+## Round 2 — what was tried, what changed
+
+The v1 numbers were already at the top of the parameter grid (target 60–150,
+dip 40–120, stop 200–800, entry bar 12–120, EMA 30/120–120/480): no grid point
+beats worst-half +$7.30 / full +$14.13. Structural additions were all rejected
+on the maximin criterion — partial profit-taking (full +$10.17, worst +$5.31),
+time exits (best +$6.54), and a separate higher re-entry target (+$15.98 full
+but only by fitting one leg's +148 bps peak; halves get worse at 150+ bps, so
+it was rejected as overfit). The stop is inert on the dev window (never
+triggers), as are the ratchet and hard-stop variants.
+
+Two genuine refinements shipped instead, each as its own commit and each
+re-graded with the official scorer:
+
+1. **Gated open** (`ca24b0d`): buy waits while the trailing 24-bar return is
+   worse than -50 bps (binds on ~6.6% of bars; dev open is -12 bps, so it
+   passes at bar 24), deadline bar 240.
+2. **Stop-exit cooldown** (`2979e2c`): 120 bars with no dip re-entry after a
+   trailing-stop exit.
+
+Neither fires on the dev window, so the official grade is unchanged — and the
+real `main.py` (not a port) was re-run through the offline simulator on every
+window to prove it: full +$14.128 (4 trades), halves +$14.13 / +$7.30, quarters
+-$4.68 / +$9.78 / +$7.30 / -$0.26 (the quarter losses are slicing artifacts:
+a leg opened in the quarter is flattened at its boundary before the target).
+
+Final numbers are the same as v1's — the round-2 work is race-window insurance
+and the transcript-gate fix (main.py now revised in two separate commits),
+not a dev-window PnL gain.
 
 ## Grade locally
 
