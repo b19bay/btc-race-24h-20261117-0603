@@ -4,6 +4,10 @@ Strategy, in plain words (hello, batch, orders, bar):
 - Enter once, early: on the first batch at or after bar 24, buy with all cash.
   The entry is persistent: if the buy is rejected (for example a warm-up batch),
   it is retried on the next batch, so the bot never strands itself flat.
+  The open is gated: the buy waits while the trailing 24-bar return is worse
+  than -50 bps (the market is already falling steeply), and buys at bar 240 at
+  the latest no matter what, so the gate can delay the entry but never strand
+  the bot flat. On the dev window the gate passes at bar 24 (return -12 bps).
 - Bank the trend: while holding, sell everything once the close is 100 bps above
   the close of the bar on which the buy was decided.
 - Re-enter on dips: after an exit, buy again only when the fast EMA (60 bars) is
@@ -32,6 +36,10 @@ TARGET_BPS = 100
 DIP_BPS = 80
 STOP_BPS = 300
 MAX_SLIP_BPS = 500
+GATE_N = 24          # trailing-return window for the opening-entry gate
+GATE_BPS = 50        # buy waits while the trailing return is worse than -50 bps
+GATE_DEADLINE = 240  # buy at this bar at the latest, gate or no gate
+COOL_BARS = 120      # no dip re-entry for this many bars after a stop exit
 
 
 class Bot:
@@ -92,12 +100,16 @@ class Bot:
                          "max_slippage_bps": MAX_SLIP_BPS}]
             return []
 
-        # Flat: initial entry, first batch at or after bar 24 (retried if rejected).
+        # Flat: initial entry, first batch at or after bar 24 (retried if rejected),
+        # gated on the trailing 24-bar return, with a hard deadline at bar 240.
         if not self.entered and i >= ENTRY_BAR:
-            self.decision_close = close
-            return [{"side": "buy", "symbol": SYMBOL,
-                     "notional_quote_units": state.cash,
-                     "max_slippage_bps": MAX_SLIP_BPS}]
+            ret24 = (close - self.closes[i - GATE_N]) * 10000 // self.closes[i - GATE_N]
+            if ret24 >= -GATE_BPS or i >= GATE_DEADLINE:
+                self.decision_close = close
+                return [{"side": "buy", "symbol": SYMBOL,
+                         "notional_quote_units": state.cash,
+                         "max_slippage_bps": MAX_SLIP_BPS}]
+            return []
         # Flat: dip re-entry after an exit, only in an uptrend.
         if self.armed and i > SLOW_N and self.ema_fast > self.ema_slow:
             if close * 10000 <= int(self.ema_fast) * (10000 - DIP_BPS):
